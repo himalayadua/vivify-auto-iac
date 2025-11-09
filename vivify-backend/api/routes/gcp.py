@@ -96,6 +96,16 @@ async def discover_resources(request: DiscoveryRequest):
         # Cache the result
         architecture_cache[project] = architecture
         
+        # Update agent's canvas tool with the discovered data
+        try:
+            from services.agent_service import get_agent
+            agent = get_agent()
+            agent.update_canvas_data(architecture.dict())
+            print(f"✅ Updated agent's canvas tool with GCP data")
+        except Exception as e:
+            print(f"⚠️  Warning: Could not update agent canvas tool: {str(e)}")
+            # Don't fail the discovery if agent update fails
+        
         print(f"\n{'='*60}")
         print(f"✅ Discovery Complete!")
         print(f"   Resources: {len(architecture.resources)}")

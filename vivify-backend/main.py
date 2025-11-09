@@ -48,8 +48,9 @@ async def root():
     }
 
 # Import and include routers
-from api.routes import gcp
+from api.routes import gcp, chat
 app.include_router(gcp.router, prefix="/api/gcp", tags=["GCP"])
+app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 
 # Tasks router will be added later
 # from api.routes import tasks
