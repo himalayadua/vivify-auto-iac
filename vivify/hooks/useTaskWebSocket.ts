@@ -36,6 +36,8 @@ export const MOCK_INITIAL_TASKS: Record<string, Task> = {
   'task-6': { id: 'task-6', title: 'Deploy Staging Environment', description: 'Push the latest build to the staging server for QA testing.', status: TaskStatus.Todo, created_at: '2023-10-26T16:00:00Z', updated_at: '2023-10-26T16:00:00Z' },
 };
 
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000';
+
 export const useTaskWebSocket = (projectId: string) => {
   // FIX: The state shape was incorrect. The JSON patches expect a root object with a `tasks` property.
   const [state, setState] = useState<{ tasks: Record<string, Task> }>({ tasks: {} });
@@ -43,8 +45,7 @@ export const useTaskWebSocket = (projectId: string) => {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const retryAttempt = useRef(0);
-  const mockTimeoutRef = useRef<any>(null);
-  const mockIntervalRef = useRef<any>(null);
+  const pollIntervalRef = useRef<any>(null);
 
   const applyPatches = useCallback((patches: JsonPatchOperation[]) => {
     try {
@@ -60,50 +61,79 @@ export const useTaskWebSocket = (projectId: string) => {
     }
   }, []);
 
-  const connect = useCallback(() => {
-    // This simulates a WebSocket connection.
-    console.log(`Connecting to ws://localhost:8080/api/tasks/stream/ws?project_id=${projectId}`);
-    setIsConnected(false);
-
-    mockTimeoutRef.current = setTimeout(() => {
-      // onopen
-      console.log('WebSocket connection established.');
+  const fetchTasks = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tasks`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      
+      // Convert array to Record<string, Task>
+      const tasksRecord: Record<string, Task> = {};
+      data.tasks.forEach((task: Task) => {
+        tasksRecord[task.id] = task;
+      });
+      
+      // Apply as a patch
+      const patch: JsonPatchOperation[] = [{ op: 'replace', path: '/tasks', value: tasksRecord }];
+      applyPatches(patch);
+      
       setIsConnected(true);
       setIsLoading(false);
-      retryAttempt.current = 0;
       setError(null);
+    } catch (err) {
+      console.error('Failed to fetch tasks:', err);
+      setError(err instanceof Error ? err : new Error('Failed to fetch tasks'));
+      setIsLoading(false);
+    }
+  }, [applyPatches]);
 
-      // onmessage - initial snapshot
-      const initialPatch: JsonPatchOperation[] = [{ op: 'replace', path: '/tasks', value: MOCK_INITIAL_TASKS }];
-      applyPatches(initialPatch);
+  const connect = useCallback(() => {
+    console.log(`Fetching tasks from backend API...`);
+    setIsConnected(false);
 
-      // Note: Removed the interval that was adding tasks every 8 seconds
-      // Tasks are now static and only updated via updateTaskStatus
+    // Initial fetch
+    fetchTasks();
 
-    }, 1000); // Simulate connection delay
-  }, [projectId, applyPatches]);
+    // Poll for updates every 5 seconds
+    pollIntervalRef.current = setInterval(() => {
+      fetchTasks();
+    }, 5000);
+  }, [fetchTasks]);
 
   useEffect(() => {
     connect();
     return () => {
-      // Cleanup: clear both timeout and interval
-      if (mockTimeoutRef.current) {
-        clearTimeout(mockTimeoutRef.current);
-      }
-      if (mockIntervalRef.current) {
-        clearInterval(mockIntervalRef.current);
+      // Cleanup: clear polling interval
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
       }
     };
   }, [connect]);
   
-  const updateTaskStatus = useCallback((taskId: string, newStatus: TaskStatus) => {
-    // This function simulates the client sending an update and receiving a patch back.
-    const patch: JsonPatchOperation[] = [
-      { op: 'replace', path: `/tasks/${taskId}/status`, value: newStatus },
-      { op: 'replace', path: `/tasks/${taskId}/updated_at`, value: new Date().toISOString() }
-    ];
-    applyPatches(patch);
-  }, [applyPatches]);
+  const updateTaskStatus = useCallback(async (taskId: string, newStatus: TaskStatus) => {
+    try {
+      // Update via API
+      const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      // Immediately fetch fresh data
+      await fetchTasks();
+    } catch (err) {
+      console.error('Failed to update task:', err);
+      setError(err instanceof Error ? err : new Error('Failed to update task'));
+    }
+  }, [fetchTasks]);
 
   return { tasks: state.tasks, isLoading, isConnected, error, updateTaskStatus };
 };
