@@ -1,7 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { produce } from 'immer';
 import { applyPatch } from '../utils/jsonPatch';
 import { Task, TaskStatus, JsonPatchOperation } from '../types';
+
+// Configuration for WebSocket batching
+const BATCH_CONFIG = {
+  maxBatchSize: 50,
+  maxBatchDelayMs: 100,
+  enabled: true,
+};
 
 // Mock data to simulate server responses
 export const MOCK_INITIAL_TASKS: Record<string, Task> = {
@@ -36,16 +43,29 @@ export const MOCK_INITIAL_TASKS: Record<string, Task> = {
   'task-6': { id: 'task-6', title: 'Deploy Staging Environment', description: 'Push the latest build to the staging server for QA testing.', status: TaskStatus.Todo, created_at: '2023-10-26T16:00:00Z', updated_at: '2023-10-26T16:00:00Z' },
 };
 
+interface PendingUpdate {
+  taskId: string;
+  field: string;
+  value: any;
+  timestamp: number;
+}
+
+interface WebSocketState {
+  tasks: Record<string, Task>;
+}
+
 export const useTaskWebSocket = (projectId: string) => {
-  // FIX: The state shape was incorrect. The JSON patches expect a root object with a `tasks` property.
-  const [state, setState] = useState<{ tasks: Record<string, Task> }>({ tasks: {} });
+  const [state, setState] = useState<WebSocketState>({ tasks: {} });
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const retryAttempt = useRef(0);
-  const mockTimeoutRef = useRef<any>(null);
-  const mockIntervalRef = useRef<any>(null);
+  
+  // Refs for batching
+  const pendingUpdates = useRef<PendingUpdate[]>([]);
+  const batchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Optimized patch application with batching
   const applyPatches = useCallback((patches: JsonPatchOperation[]) => {
     try {
       setState(currentState => {
@@ -60,50 +80,140 @@ export const useTaskWebSocket = (projectId: string) => {
     }
   }, []);
 
+  // Flush pending updates as a batch
+  const flushPendingUpdates = useCallback(() => {
+    if (pendingUpdates.current.length === 0) return;
+
+    // Optimize: merge updates for the same task/field
+    const mergedUpdates = new Map<string, PendingUpdate>();
+    for (const update of pendingUpdates.current) {
+      const key = `${update.taskId}:${update.field}`;
+      // Keep only the latest update for each task/field combination
+      if (!mergedUpdates.has(key) || mergedUpdates.get(key)!.timestamp < update.timestamp) {
+        mergedUpdates.set(key, update);
+      }
+    }
+
+    // Convert to patches
+    const patches: JsonPatchOperation[] = Array.from(mergedUpdates.values()).flatMap(update => [
+      { op: 'replace' as const, path: `/tasks/${update.taskId}/${update.field}`, value: update.value },
+    ]);
+
+    // Add updated_at for each unique task
+    const uniqueTaskIds = new Set(Array.from(mergedUpdates.values()).map(u => u.taskId));
+    for (const taskId of uniqueTaskIds) {
+      patches.push({
+        op: 'replace' as const,
+        path: `/tasks/${taskId}/updated_at`,
+        value: new Date().toISOString()
+      });
+    }
+
+    // Apply all patches at once
+    applyPatches(patches);
+
+    // Clear pending updates
+    pendingUpdates.current = [];
+    
+    console.log(`Flushed ${patches.length} batched updates`);
+  }, [applyPatches]);
+
+  // Schedule batch flush
+  const scheduleBatchFlush = useCallback(() => {
+    if (!BATCH_CONFIG.enabled) {
+      flushPendingUpdates();
+      return;
+    }
+
+    // Clear existing timeout
+    if (batchTimeoutRef.current) {
+      clearTimeout(batchTimeoutRef.current);
+    }
+
+    // Check if we should flush immediately (max batch size reached)
+    if (pendingUpdates.current.length >= BATCH_CONFIG.maxBatchSize) {
+      flushPendingUpdates();
+      return;
+    }
+
+    // Schedule delayed flush
+    batchTimeoutRef.current = setTimeout(() => {
+      flushPendingUpdates();
+    }, BATCH_CONFIG.maxBatchDelayMs);
+  }, [flushPendingUpdates]);
+
+  // Add update to batch
+  const queueUpdate = useCallback((taskId: string, field: string, value: any) => {
+    pendingUpdates.current.push({
+      taskId,
+      field,
+      value,
+      timestamp: Date.now()
+    });
+    scheduleBatchFlush();
+  }, [scheduleBatchFlush]);
+
+  // Connect to WebSocket (simulated)
   const connect = useCallback(() => {
-    // This simulates a WebSocket connection.
     console.log(`Connecting to ws://localhost:8080/api/tasks/stream/ws?project_id=${projectId}`);
     setIsConnected(false);
 
     mockTimeoutRef.current = setTimeout(() => {
-      // onopen
       console.log('WebSocket connection established.');
       setIsConnected(true);
       setIsLoading(false);
-      retryAttempt.current = 0;
       setError(null);
 
-      // onmessage - initial snapshot
-      const initialPatch: JsonPatchOperation[] = [{ op: 'replace', path: '/tasks', value: MOCK_INITIAL_TASKS }];
+      // Initial snapshot
+      const initialPatch: JsonPatchOperation[] = [
+        { op: 'replace', path: '/tasks', value: MOCK_INITIAL_TASKS }
+      ];
       applyPatches(initialPatch);
-
-      // Note: Removed the interval that was adding tasks every 8 seconds
-      // Tasks are now static and only updated via updateTaskStatus
-
-    }, 1000); // Simulate connection delay
+    }, 1000);
   }, [projectId, applyPatches]);
 
   useEffect(() => {
     connect();
     return () => {
-      // Cleanup: clear both timeout and interval
       if (mockTimeoutRef.current) {
         clearTimeout(mockTimeoutRef.current);
       }
-      if (mockIntervalRef.current) {
-        clearInterval(mockIntervalRef.current);
+      if (batchTimeoutRef.current) {
+        clearTimeout(batchTimeoutRef.current);
       }
+      // Flush any remaining updates on unmount
+      flushPendingUpdates();
     };
-  }, [connect]);
+  }, [connect, flushPendingUpdates]);
   
+  // Single task status update (batched)
   const updateTaskStatus = useCallback((taskId: string, newStatus: TaskStatus) => {
-    // This function simulates the client sending an update and receiving a patch back.
-    const patch: JsonPatchOperation[] = [
-      { op: 'replace', path: `/tasks/${taskId}/status`, value: newStatus },
-      { op: 'replace', path: `/tasks/${taskId}/updated_at`, value: new Date().toISOString() }
-    ];
-    applyPatches(patch);
-  }, [applyPatches]);
+    queueUpdate(taskId, 'status', newStatus);
+  }, [queueUpdate]);
 
-  return { tasks: state.tasks, isLoading, isConnected, error, updateTaskStatus };
+  // Batch update multiple tasks at once
+  const batchUpdateTaskStatus = useCallback((
+    updates: Array<{ taskId: string; newStatus: TaskStatus }>
+  ) => {
+    for (const { taskId, newStatus } of updates) {
+      pendingUpdates.current.push({
+        taskId,
+        field: 'status',
+        value: newStatus,
+        timestamp: Date.now()
+      });
+    }
+    // Force immediate flush for explicit batch updates
+    flushPendingUpdates();
+  }, [flushPendingUpdates]);
+
+  // Memoize return value to prevent unnecessary re-renders
+  return useMemo(() => ({
+    tasks: state.tasks,
+    isLoading,
+    isConnected,
+    error,
+    updateTaskStatus,
+    batchUpdateTaskStatus
+  }), [state.tasks, isLoading, isConnected, error, updateTaskStatus, batchUpdateTaskStatus]);
 };

@@ -16,5 +16,17 @@ langchain==0.2.16
 langchain-google-genai==1.0.10
 langchain-community==0.2.16
 tavily-python==0.3.0
-sqlalchemy==2.0.23
+
+# Database
+sqlalchemy[asyncio]==2.0.23
 aiosqlite==0.19.0
+asyncpg==0.29.0  # PostgreSQL async driver
+
+# Caching
+redis[hiredis]==5.0.1  # Redis with C parser for performance
+
+# Testing
+pytest==8.0.0
+pytest-asyncio==0.23.0
+pytest-cov==4.1.0
+httpx==0.26.0  # For async test client

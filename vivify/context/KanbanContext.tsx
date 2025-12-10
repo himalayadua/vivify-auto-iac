@@ -1,5 +1,4 @@
-
-import React, { createContext, useContext, useMemo, useCallback } from 'react';
+import React, { createContext, useContext, useMemo, useCallback, useRef } from 'react';
 import { useTaskWebSocket } from '../hooks/useTaskWebSocket';
 import { Task, TaskStatus } from '../types';
 import { COLUMN_ORDER } from '../constants';
@@ -14,7 +13,10 @@ interface KanbanContextType {
   isConnected: boolean;
   error: Error | null;
   updateTaskStatus: (taskId: string, newStatus: TaskStatus) => void;
+  batchUpdateTaskStatus: (updates: Array<{ taskId: string; newStatus: TaskStatus }>) => void;
   setSelectedTask: (task: Task | null) => void;
+  getTaskById: (taskId: string) => Task | undefined;
+  getTasksByStatus: (status: TaskStatus) => Task[];
 }
 
 const KanbanContext = createContext<KanbanContextType | undefined>(undefined);
@@ -23,18 +25,31 @@ export const KanbanProvider: React.FC<{
   children: React.ReactNode;
   setSelectedTask: (task: Task | null) => void;
 }> = ({ children, setSelectedTask }) => {
-  const { tasks: tasksById, isLoading, isConnected, error, updateTaskStatus: wsUpdateTaskStatus } = useTaskWebSocket('mock_project_id');
+  const { 
+    tasks: tasksById, 
+    isLoading, 
+    isConnected, 
+    error, 
+    updateTaskStatus: wsUpdateTaskStatus,
+    batchUpdateTaskStatus: wsBatchUpdateTaskStatus 
+  } = useTaskWebSocket('mock_project_id');
 
+  // Memoize sorted tasks array
   const tasks = useMemo(() => {
-    return Object.values(tasksById).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return Object.values(tasksById).sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
   }, [tasksById]);
 
+  // Memoize grouped tasks with stable reference
   const groupedTasks = useMemo(() => {
+    // Initialize with empty arrays for all statuses
     const initialGroups: GroupedTasks = {} as GroupedTasks;
     COLUMN_ORDER.forEach(status => {
       initialGroups[status] = [];
     });
 
+    // Group tasks by status
     return tasks.reduce((acc, task) => {
       if (acc[task.status]) {
         acc[task.status].push(task);
@@ -43,16 +58,32 @@ export const KanbanProvider: React.FC<{
     }, initialGroups);
   }, [tasks]);
   
+  // Memoize task status update function
   const updateTaskStatus = useCallback((taskId: string, newStatus: TaskStatus) => {
-    // This would typically be a REST API call.
-    // The WebSocket server would then broadcast the change.
-    // For this demo, we'll directly update via the mock WebSocket.
     console.log(`Updating task ${taskId} to status ${newStatus}`);
     wsUpdateTaskStatus(taskId, newStatus);
   }, [wsUpdateTaskStatus]);
 
+  // Batch update for multiple tasks (optimized for bulk operations)
+  const batchUpdateTaskStatus = useCallback((
+    updates: Array<{ taskId: string; newStatus: TaskStatus }>
+  ) => {
+    console.log(`Batch updating ${updates.length} tasks`);
+    wsBatchUpdateTaskStatus(updates);
+  }, [wsBatchUpdateTaskStatus]);
 
-  const value = {
+  // Memoized task lookup by ID
+  const getTaskById = useCallback((taskId: string) => {
+    return tasksById[taskId];
+  }, [tasksById]);
+
+  // Memoized tasks by status lookup
+  const getTasksByStatus = useCallback((status: TaskStatus) => {
+    return groupedTasks[status] || [];
+  }, [groupedTasks]);
+
+  // Memoize the entire context value
+  const value = useMemo(() => ({
     tasksById,
     groupedTasks,
     tasks,
@@ -60,8 +91,23 @@ export const KanbanProvider: React.FC<{
     isConnected,
     error,
     updateTaskStatus,
+    batchUpdateTaskStatus,
     setSelectedTask,
-  };
+    getTaskById,
+    getTasksByStatus,
+  }), [
+    tasksById,
+    groupedTasks,
+    tasks,
+    isLoading,
+    isConnected,
+    error,
+    updateTaskStatus,
+    batchUpdateTaskStatus,
+    setSelectedTask,
+    getTaskById,
+    getTasksByStatus,
+  ]);
 
   return <KanbanContext.Provider value={value}>{children}</KanbanContext.Provider>;
 };
@@ -72,4 +118,21 @@ export const useKanban = (): KanbanContextType => {
     throw new Error('useKanban must be used within a KanbanProvider');
   }
   return context;
+};
+
+/**
+ * Selector hook for accessing specific task data
+ * Uses reference equality to prevent unnecessary re-renders
+ */
+export const useTask = (taskId: string): Task | undefined => {
+  const { tasksById } = useKanban();
+  return useMemo(() => tasksById[taskId], [tasksById, taskId]);
+};
+
+/**
+ * Selector hook for accessing tasks by status
+ */
+export const useTasksByStatus = (status: TaskStatus): Task[] => {
+  const { groupedTasks } = useKanban();
+  return useMemo(() => groupedTasks[status] || [], [groupedTasks, status]);
 };

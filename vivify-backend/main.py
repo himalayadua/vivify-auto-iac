@@ -48,13 +48,38 @@ async def root():
     }
 
 # Import and include routers
-from api.routes import gcp, chat
+from api.routes import gcp, chat, tasks
 app.include_router(gcp.router, prefix="/api/gcp", tags=["GCP"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 
-# Tasks router will be added later
-# from api.routes import tasks
-# app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
+
+# Startup and shutdown events
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup"""
+    from services.database import init_database
+    from services.cache import get_cache
+    
+    # Initialize database
+    await init_database()
+    
+    # Initialize cache
+    await get_cache()
+    
+    print("✅ All services initialized")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    from services.database import close_database
+    from services.cache import close_cache
+    
+    await close_database()
+    await close_cache()
+    
+    print("👋 Services shut down gracefully")
 
 if __name__ == "__main__":
     import uvicorn
