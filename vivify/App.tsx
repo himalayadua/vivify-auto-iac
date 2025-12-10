@@ -51,7 +51,7 @@ const AppContent: React.FC = () => {
         </div>
         <UserMenu />
       </header>
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-y-auto">
         {activeTab === 'architect' && <CloudDevopsArchitectPage />}
         {activeTab === 'canvas' && <GCPArchitectureDashboardPage />}
         {activeTab === 'experiments' && <ExperimentsPage />}

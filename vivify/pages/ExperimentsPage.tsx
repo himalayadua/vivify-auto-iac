@@ -37,16 +37,32 @@ const ExperimentsPage: React.FC = () => {
       });
       setResults(data);
       
-      // If run_id is available, fetch detailed results
+      // If run_id is available, start polling for results
       if (data.run_id) {
-        setTimeout(async () => {
+        // Poll for results every 2 seconds until complete
+        const pollInterval = setInterval(async () => {
           try {
             const detailedResults = await experimentsApi.getResults(data.run_id);
-            setResults(prev => prev ? { ...prev, results: detailedResults } : null);
+            const newStatus = detailedResults.status || 'running';
+            setResults(prev => prev ? { 
+              ...prev, 
+              results: detailedResults, 
+              status: newStatus
+            } : null);
+            
+            // Stop polling if experiment is complete or failed
+            if (newStatus === 'completed' || newStatus === 'failed') {
+              clearInterval(pollInterval);
+              setRunning(false);
+            }
           } catch (err) {
             console.error('Failed to fetch detailed results:', err);
+            // Don't clear interval on error, keep trying
           }
-        }, 1000);
+        }, 2000);
+        
+        // Store interval ID for cleanup
+        (window as any).__experimentPollInterval = pollInterval;
       }
     } catch (error: any) {
       console.error('Failed to run experiment:', error);
@@ -57,10 +73,18 @@ const ExperimentsPage: React.FC = () => {
         status: 'failed',
         results: { error: error.message || String(error) },
       });
-    } finally {
       setRunning(false);
     }
   };
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if ((window as any).__experimentPollInterval) {
+        clearInterval((window as any).__experimentPollInterval);
+      }
+    };
+  }, []);
 
   const getExperimentConfig = (type: string) => {
     const configs: Record<string, any> = {
@@ -78,80 +102,106 @@ const ExperimentsPage: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '1200px', margin: '0 auto', color: '#333' }}>
-      <h1>Experiments Dashboard</h1>
+    <div style={{ 
+      padding: '2rem', 
+      maxWidth: '1200px', 
+      margin: '0 auto', 
+      color: '#e5e7eb',
+      minHeight: '100vh'
+    }}>
+      <h1 style={{ color: '#f9fafb', marginBottom: '1.5rem' }}>Experiments Dashboard</h1>
       
       {error && (
         <div style={{ 
-          background: '#fee', 
-          color: '#c33', 
+          background: '#7f1d1d', 
+          color: '#fca5a5', 
           padding: '1rem', 
           borderRadius: '4px', 
-          marginBottom: '1rem' 
+          marginBottom: '1rem',
+          border: '1px solid #ef4444'
         }}>
-          {error}
+          <strong style={{ color: '#fee' }}>Error:</strong> {error}
         </div>
       )}
 
       <div style={{ marginBottom: '2rem' }}>
-        <h2>Available Experiments</h2>
+        <h2 style={{ color: '#f9fafb', marginBottom: '1rem' }}>Available Experiments</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1rem' }}>
           <div
             onClick={() => handleExperimentChange('e1')}
             style={{
               padding: '1rem',
-              border: selectedExperiment === 'e1' ? '2px solid #4285f4' : '1px solid #ccc',
+              border: selectedExperiment === 'e1' ? '2px solid #4285f4' : '1px solid #4b5563',
               borderRadius: '8px',
               cursor: 'pointer',
+              backgroundColor: selectedExperiment === 'e1' ? '#1f2937' : '#1f2937',
+              color: '#e5e7eb',
+              transition: 'all 0.2s'
             }}
           >
-            <h3>E1: Parallelism</h3>
-            <p>Measure throughput and speedup</p>
+            <h3 style={{ color: '#f9fafb', margin: '0 0 0.5rem 0' }}>E1: Parallelism</h3>
+            <p style={{ color: '#d1d5db', margin: 0 }}>Measure throughput and speedup</p>
           </div>
           <div
             onClick={() => handleExperimentChange('e2')}
             style={{
               padding: '1rem',
-              border: selectedExperiment === 'e2' ? '2px solid #4285f4' : '1px solid #ccc',
+              border: selectedExperiment === 'e2' ? '2px solid #4285f4' : '1px solid #4b5563',
               borderRadius: '8px',
               cursor: 'pointer',
+              backgroundColor: selectedExperiment === 'e2' ? '#1f2937' : '#1f2937',
+              color: '#e5e7eb',
+              transition: 'all 0.2s'
             }}
           >
-            <h3>E2: Deployability</h3>
-            <p>Measure passItr@n</p>
+            <h3 style={{ color: '#f9fafb', margin: '0 0 0.5rem 0' }}>E2: Deployability</h3>
+            <p style={{ color: '#d1d5db', margin: 0 }}>Measure passItr@n</p>
           </div>
           <div
             onClick={() => handleExperimentChange('e3')}
             style={{
               padding: '1rem',
-              border: selectedExperiment === 'e3' ? '2px solid #4285f4' : '1px solid #ccc',
+              border: selectedExperiment === 'e3' ? '2px solid #4285f4' : '1px solid #4b5563',
               borderRadius: '8px',
               cursor: 'pointer',
+              backgroundColor: selectedExperiment === 'e3' ? '#1f2937' : '#1f2937',
+              color: '#e5e7eb',
+              transition: 'all 0.2s'
             }}
           >
-            <h3>E3: Concurrency</h3>
-            <p>Measure convergence and rollback</p>
+            <h3 style={{ color: '#f9fafb', margin: '0 0 0.5rem 0' }}>E3: Concurrency</h3>
+            <p style={{ color: '#d1d5db', margin: 0 }}>Measure convergence and rollback</p>
           </div>
           <div
             onClick={() => handleExperimentChange('e4')}
             style={{
               padding: '1rem',
-              border: selectedExperiment === 'e4' ? '2px solid #4285f4' : '1px solid #ccc',
+              border: selectedExperiment === 'e4' ? '2px solid #4285f4' : '1px solid #4b5563',
               borderRadius: '8px',
               cursor: 'pointer',
+              backgroundColor: selectedExperiment === 'e4' ? '#1f2937' : '#1f2937',
+              color: '#e5e7eb',
+              transition: 'all 0.2s'
             }}
           >
-            <h3>E4: Canvas Performance</h3>
-            <p>Measure WebSocket latency and FPS</p>
+            <h3 style={{ color: '#f9fafb', margin: '0 0 0.5rem 0' }}>E4: Canvas Performance</h3>
+            <p style={{ color: '#d1d5db', margin: 0 }}>Measure WebSocket latency and FPS</p>
           </div>
         </div>
       </div>
 
       {selectedExperiment && (
         <div style={{ marginBottom: '2rem' }}>
-          <h2>Configuration</h2>
+          <h2 style={{ color: '#f9fafb', marginBottom: '1rem' }}>Configuration</h2>
           <div style={{ marginBottom: '1rem' }}>
-            <pre style={{ background: '#f5f5f5', padding: '1rem', borderRadius: '4px' }}>
+            <pre style={{ 
+              background: '#1f2937', 
+              padding: '1rem', 
+              borderRadius: '4px',
+              color: '#e5e7eb',
+              border: '1px solid #4b5563',
+              overflow: 'auto'
+            }}>
               {JSON.stringify(config, null, 2)}
             </pre>
           </div>
@@ -174,31 +224,40 @@ const ExperimentsPage: React.FC = () => {
 
       {results && (
         <div>
-          <h2>Results</h2>
+          <h2 style={{ color: '#f9fafb', marginBottom: '1rem' }}>Results</h2>
           <div style={{ 
-            background: results.status === 'completed' ? '#e8f5e9' : results.status === 'failed' ? '#ffebee' : '#fff3e0',
+            background: results.status === 'completed' ? '#064e3b' : results.status === 'failed' ? '#7f1d1d' : '#78350f',
             padding: '1rem', 
             borderRadius: '4px',
-            border: `2px solid ${results.status === 'completed' ? '#4caf50' : results.status === 'failed' ? '#f44336' : '#ff9800'}`
+            border: `2px solid ${results.status === 'completed' ? '#10b981' : results.status === 'failed' ? '#ef4444' : '#f59e0b'}`,
+            color: '#e5e7eb'
           }}>
-            <p><strong>Status:</strong> <span style={{ 
-              color: results.status === 'completed' ? '#2e7d32' : results.status === 'failed' ? '#c62828' : '#e65100',
+            <p style={{ color: '#e5e7eb' }}><strong style={{ color: '#f9fafb' }}>Status:</strong> <span style={{ 
+              color: results.status === 'completed' ? '#10b981' : results.status === 'failed' ? '#ef4444' : '#f59e0b',
               fontWeight: 'bold'
             }}>{results.status.toUpperCase()}</span></p>
-            <p><strong>Run ID:</strong> <code>{results.run_id}</code></p>
+            <p style={{ color: '#e5e7eb' }}><strong style={{ color: '#f9fafb' }}>Run ID:</strong> <code style={{ 
+              background: '#1f2937', 
+              padding: '0.25rem 0.5rem', 
+              borderRadius: '4px',
+              color: '#60a5fa',
+              fontSize: '0.9rem'
+            }}>{results.run_id}</code></p>
             {results.status === 'running' && (
-              <p style={{ color: '#e65100' }}>⏳ Experiment is running... Results will appear when complete.</p>
+              <p style={{ color: '#fbbf24' }}>⏳ Experiment is running... Results will appear when complete.</p>
             )}
             {results.results && (
               <div style={{ marginTop: '1rem' }}>
-                <h3>Results Data:</h3>
+                <h3 style={{ color: '#f9fafb', marginBottom: '0.5rem' }}>Results Data:</h3>
                 <pre style={{ 
-                  background: 'white', 
+                  background: '#1f2937', 
                   padding: '1rem', 
                   borderRadius: '4px', 
                   overflow: 'auto',
                   maxHeight: '400px',
-                  fontSize: '12px'
+                  fontSize: '12px',
+                  color: '#e5e7eb',
+                  border: '1px solid #4b5563'
                 }}>
                   {JSON.stringify(results.results, null, 2)}
                 </pre>
